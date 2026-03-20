@@ -261,6 +261,31 @@ $env:RTK_SHELL = "C:\Program Files\Git\bin\bash.exe"
 rtk err "printf 'hello\n'"
 ```
 
+### Validated Windows Rust Test Environment
+
+If repository tests fail on Windows due to linker or toolchain drift, use this known-good setup:
+
+```powershell
+$toolchain = 'D:\Rust\.rustup\toolchains\stable-x86_64-pc-windows-gnullvm'
+$llvm = 'D:\llvm-mingw\llvm-mingw-20260311-ucrt-x86_64\bin'
+
+$env:PATH = "$llvm;D:\Rust\.cargo\bin;" + $env:PATH
+$env:RUSTC = Join-Path $toolchain 'bin\rustc.exe'
+$env:RUSTDOC = Join-Path $toolchain 'bin\rustdoc.exe'
+$env:CC = Join-Path $llvm 'x86_64-w64-mingw32-clang.exe'
+$env:AR = Join-Path $llvm 'llvm-ar.exe'
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER = Join-Path $llvm 'x86_64-w64-mingw32-clang.exe'
+
+& (Join-Path $toolchain 'bin\cargo.exe') test --quiet --target x86_64-pc-windows-gnullvm
+```
+
+This was verified successfully for this repository.
+
+Avoid these failing combinations:
+
+- `stable-x86_64-pc-windows-gnu` with `E:\Link7\anyui\mingw\bin` early in `PATH`
+- `cargo.exe` / `rustc.exe` rustup shims without a configured default toolchain
+
 ---
 
 ## Problem: "command not found: rtk" after installation

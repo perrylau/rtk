@@ -170,6 +170,41 @@ All three must pass before any PR:
 cargo fmt --all --check && cargo clippy --all-targets && cargo test
 ```
 
+### Windows Test Environment Notes
+
+On this repository, Windows testing may fail if Rust picks up an unrelated MinGW toolchain
+from `PATH` or if `rustup` shims are used without an explicit default toolchain.
+
+Known-good setup on this machine:
+
+- Rust toolchain: `D:\Rust\.rustup\toolchains\stable-x86_64-pc-windows-gnullvm`
+- LLVM/MinGW toolchain: `D:\llvm-mingw\llvm-mingw-20260311-ucrt-x86_64\bin`
+- Target: `x86_64-pc-windows-gnullvm`
+
+PowerShell example for running tests with the validated environment:
+
+```powershell
+$toolchain = 'D:\Rust\.rustup\toolchains\stable-x86_64-pc-windows-gnullvm'
+$llvm = 'D:\llvm-mingw\llvm-mingw-20260311-ucrt-x86_64\bin'
+
+$env:PATH = "$llvm;D:\Rust\.cargo\bin;" + $env:PATH
+$env:RUSTC = Join-Path $toolchain 'bin\rustc.exe'
+$env:RUSTDOC = Join-Path $toolchain 'bin\rustdoc.exe'
+$env:CC = Join-Path $llvm 'x86_64-w64-mingw32-clang.exe'
+$env:AR = Join-Path $llvm 'llvm-ar.exe'
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER = Join-Path $llvm 'x86_64-w64-mingw32-clang.exe'
+
+& (Join-Path $toolchain 'bin\cargo.exe') test --quiet --target x86_64-pc-windows-gnullvm
+```
+
+Known bad combinations observed during verification:
+
+- `stable-x86_64-pc-windows-gnu` with `E:\Link7\anyui\mingw\bin` first in `PATH`
+  - `dlltool`: `invalid bfd target`
+  - `gcc`: `cc1.exe: sorry, unimplemented: 64-bit mode not compiled in`
+- `rustup` shim cargo/rustc without a configured default toolchain
+  - `rustup could not choose a version of rustc to run`
+
 ### PR Testing Checklist
 
 - [ ] Unit tests added/updated for changed code
