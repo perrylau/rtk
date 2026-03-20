@@ -2112,9 +2112,8 @@ fn main() -> Result<()> {
                 .take()
                 .context("Failed to capture child stderr")?;
 
-            let stdout_handle = thread::spawn(move || -> std::io::Result<Vec<u8>> {
+            let stdout_handle = thread::spawn(move || -> std::io::Result<()> {
                 let mut reader = stdout_pipe;
-                let mut captured = Vec::new();
                 let mut buf = [0u8; 8192];
                 let mut out = std::io::stdout().lock();
 
@@ -2123,17 +2122,15 @@ fn main() -> Result<()> {
                     if count == 0 {
                         break;
                     }
-                    captured.extend_from_slice(&buf[..count]);
                     out.write_all(&buf[..count])?;
                     out.flush()?;
                 }
 
-                Ok(captured)
+                Ok(())
             });
 
-            let stderr_handle = thread::spawn(move || -> std::io::Result<Vec<u8>> {
+            let stderr_handle = thread::spawn(move || -> std::io::Result<()> {
                 let mut reader = stderr_pipe;
-                let mut captured = Vec::new();
                 let mut buf = [0u8; 8192];
                 let mut err = std::io::stderr().lock();
 
@@ -2142,36 +2139,27 @@ fn main() -> Result<()> {
                     if count == 0 {
                         break;
                     }
-                    captured.extend_from_slice(&buf[..count]);
                     err.write_all(&buf[..count])?;
                     err.flush()?;
                 }
 
-                Ok(captured)
+                Ok(())
             });
 
             let status = child
                 .wait()
                 .context(format!("Failed waiting for command: {}", cmd_name))?;
 
-            let stdout_bytes = stdout_handle
+            stdout_handle
                 .join()
                 .map_err(|_| anyhow::anyhow!("stdout streaming thread panicked"))??;
-            let stderr_bytes = stderr_handle
+            stderr_handle
                 .join()
                 .map_err(|_| anyhow::anyhow!("stderr streaming thread panicked"))??;
 
-            let stdout = String::from_utf8_lossy(&stdout_bytes);
-            let stderr = String::from_utf8_lossy(&stderr_bytes);
-            let full_output = format!("{}{}", stdout, stderr);
-
-            // Track usage (input = output since no filtering)
-            timer.track(
-                &proxied_command,
-                &tracked_proxy_command,
-                &full_output,
-                &full_output,
-            );
+            // Proxy streams raw output directly, so keep tracking timing-only to
+            // avoid retaining the full stdout/stderr payload in memory.
+            timer.track_passthrough(&proxied_command, &tracked_proxy_command);
 
             // Exit with same code as child process
             if !status.success() {

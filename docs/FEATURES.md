@@ -996,9 +996,9 @@ Utile pour les commandes longues dont la sortie n'a pas de filtre dedie.
 
 ---
 
-### `rtk proxy` -- Passthrough avec suivi
+### `rtk proxy` -- Passthrough avec suivi de temps
 
-**Objectif :** Execute une commande **sans filtrage** mais enregistre l'utilisation pour le suivi.
+**Objectif :** Execute une commande **sans filtrage** mais enregistre le temps d'execution pour le suivi, sans conserver toute la sortie en memoire.
 
 ```bash
 rtk proxy <commande...>

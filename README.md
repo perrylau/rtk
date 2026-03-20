@@ -214,7 +214,7 @@ rtk log app.log                 # Deduplicated logs
 rtk curl <url>                  # Auto-detect JSON + schema
 rtk wget <url>                  # Download, strip progress bars
 rtk summary <long command>      # Heuristic summary
-rtk proxy <command>             # Raw passthrough + tracking
+rtk proxy <command>             # Raw passthrough + timing-only tracking
 ```
 
 ### Token Savings Analytics
