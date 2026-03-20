@@ -226,6 +226,41 @@ rtk --version  # Should be 0.23.1+
 ### Affected Commands
 All commands that spawn external tools: `rtk vitest`, `rtk lint`, `rtk tsc`, `rtk pnpm`, `rtk playwright`, `rtk prisma`, `rtk next`, `rtk prettier`, `rtk ruff`, `rtk pytest`, `rtk pip`, `rtk mypy`, `rtk golangci-lint`, and others.
 
+### Related: `rtk err`, `rtk test`, or `rtk summary` use the wrong shell on Windows
+
+If you use RTK from Codex, Copilot, or another Windows-first agent, the wrapper commands
+`rtk err <cmd>`, `rtk test <cmd>`, and `rtk summary <cmd>` now select a shell using this order:
+
+1. `RTK_SHELL`
+2. `SHELL`
+3. `pwsh`
+4. `powershell`
+5. `COMSPEC`
+6. `cmd`
+
+This matters because PowerShell commands like `Get-ChildItem` or `$env:FOO` will fail if the
+wrapper ends up running through `cmd.exe`.
+
+**Recommended override for Codex / Copilot on Windows:**
+
+```powershell
+$env:RTK_SHELL = "pwsh"
+rtk summary "Get-ChildItem Env: | Select-Object -First 5"
+```
+
+If you need an explicit path:
+
+```powershell
+$env:RTK_SHELL = "C:\Program Files\PowerShell\7\pwsh.exe"
+```
+
+If you prefer Git Bash semantics:
+
+```powershell
+$env:RTK_SHELL = "C:\Program Files\Git\bin\bash.exe"
+rtk err "printf 'hello\n'"
+```
+
 ---
 
 ## Problem: "command not found: rtk" after installation

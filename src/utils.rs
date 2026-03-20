@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use regex::Regex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Truncates a string to `max_len` characters, appending `...` if needed.
@@ -79,6 +79,108 @@ pub fn execute_command(cmd: &str, args: &[&str]) -> Result<(String, String, i32)
     let exit_code = output.status.code().unwrap_or(-1);
 
     Ok((stdout, stderr, exit_code))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellInvocation {
+    program: String,
+    command_flag: &'static str,
+}
+
+fn shell_program_name(program: &str) -> String {
+    Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program)
+        .to_ascii_lowercase()
+}
+
+fn shell_command_flag(program: &str) -> &'static str {
+    let name = shell_program_name(program);
+    if name.contains("pwsh") || name.contains("powershell") {
+        "-Command"
+    } else if name == "cmd" || name == "cmd.exe" || name == "command.com" {
+        "/C"
+    } else {
+        "-c"
+    }
+}
+
+fn select_shell_program(
+    is_windows: bool,
+    rtk_shell: Option<&str>,
+    shell_env: Option<&str>,
+    comspec: Option<&str>,
+    has_pwsh: bool,
+    has_powershell: bool,
+) -> String {
+    let preferred = rtk_shell
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| shell_env.map(str::trim).filter(|value| !value.is_empty()));
+
+    if let Some(shell) = preferred {
+        return shell.to_string();
+    }
+
+    if is_windows {
+        if has_pwsh {
+            "pwsh".to_string()
+        } else if has_powershell {
+            "powershell".to_string()
+        } else if let Some(shell) = comspec.map(str::trim).filter(|value| !value.is_empty()) {
+            shell.to_string()
+        } else {
+            "cmd".to_string()
+        }
+    } else {
+        "sh".to_string()
+    }
+}
+
+fn shell_invocation(
+    is_windows: bool,
+    rtk_shell: Option<&str>,
+    shell_env: Option<&str>,
+    comspec: Option<&str>,
+    has_pwsh: bool,
+    has_powershell: bool,
+) -> ShellInvocation {
+    let program = select_shell_program(
+        is_windows,
+        rtk_shell,
+        shell_env,
+        comspec,
+        has_pwsh,
+        has_powershell,
+    );
+    let command_flag = shell_command_flag(&program);
+    ShellInvocation {
+        program,
+        command_flag,
+    }
+}
+
+/// Build a shell-backed `Command` for ad-hoc command strings.
+///
+/// Shell selection rules:
+/// - `RTK_SHELL` wins if explicitly set
+/// - otherwise `SHELL` is honored when present
+/// - on Windows, falls back to `pwsh`, then `powershell`, then `COMSPEC`, then `cmd`
+/// - on Unix, falls back to `sh`
+pub fn shell_command(command: &str) -> Command {
+    let invocation = shell_invocation(
+        cfg!(target_os = "windows"),
+        std::env::var("RTK_SHELL").ok().as_deref(),
+        std::env::var("SHELL").ok().as_deref(),
+        std::env::var("COMSPEC").ok().as_deref(),
+        tool_exists("pwsh"),
+        tool_exists("powershell"),
+    );
+
+    let mut cmd = Command::new(&invocation.program);
+    cmd.arg(invocation.command_flag).arg(command);
+    cmd
 }
 
 /// Formats a token count with K/M suffixes for readability.
@@ -370,7 +472,69 @@ mod tests {
     }
 
     #[test]
+    fn test_shell_invocation_prefers_explicit_rtk_shell() {
+        let invocation = shell_invocation(
+            true,
+            Some(r"C:\Program Files\PowerShell\7\pwsh.exe"),
+            Some("/bin/bash"),
+            Some(r"C:\Windows\System32\cmd.exe"),
+            true,
+            true,
+        );
+
+        assert_eq!(invocation.program, r"C:\Program Files\PowerShell\7\pwsh.exe");
+        assert_eq!(invocation.command_flag, "-Command");
+    }
+
+    #[test]
+    fn test_shell_invocation_uses_shell_env_when_present() {
+        let invocation = shell_invocation(
+            true,
+            None,
+            Some(r"C:\Program Files\Git\bin\bash.exe"),
+            Some(r"C:\Windows\System32\cmd.exe"),
+            false,
+            false,
+        );
+
+        assert_eq!(invocation.program, r"C:\Program Files\Git\bin\bash.exe");
+        assert_eq!(invocation.command_flag, "-c");
+    }
+
+    #[test]
+    fn test_shell_invocation_windows_defaults_to_pwsh() {
+        let invocation = shell_invocation(true, None, None, None, true, true);
+        assert_eq!(invocation.program, "pwsh");
+        assert_eq!(invocation.command_flag, "-Command");
+    }
+
+    #[test]
+    fn test_shell_invocation_windows_falls_back_to_comspec() {
+        let invocation = shell_invocation(
+            true,
+            None,
+            None,
+            Some(r"C:\Windows\System32\cmd.exe"),
+            false,
+            false,
+        );
+
+        assert_eq!(invocation.program, r"C:\Windows\System32\cmd.exe");
+        assert_eq!(invocation.command_flag, "/C");
+    }
+
+    #[test]
+    fn test_shell_invocation_unix_defaults_to_sh() {
+        let invocation = shell_invocation(false, None, None, None, false, false);
+        assert_eq!(invocation.program, "sh");
+        assert_eq!(invocation.command_flag, "-c");
+    }
+
+    #[test]
     fn test_execute_command_success() {
+        #[cfg(target_os = "windows")]
+        let result = execute_command("cmd", &["/C", "echo", "test"]);
+        #[cfg(not(target_os = "windows"))]
         let result = execute_command("echo", &["test"]);
         assert!(result.is_ok());
         let (stdout, _, code) = result.unwrap();
@@ -538,14 +702,28 @@ mod tests {
 
     #[test]
     fn test_resolved_command_executes_known_command() {
-        let output = resolved_command("cargo")
-            .arg("--version")
+        #[cfg(target_os = "windows")]
+        let mut cmd = {
+            let mut command = resolved_command("cmd");
+            command.args(["/C", "echo", "resolved-command-ok"]);
+            command
+        };
+        #[cfg(not(target_os = "windows"))]
+        let mut cmd = {
+            let mut command = resolved_command("sh");
+            command.args(["-c", "printf resolved-command-ok"]);
+            command
+        };
+
+        let output = cmd
             .output()
-            .expect("resolved_command('cargo') should execute");
+            .expect("resolved_command should execute a known shell binary");
         assert!(
             output.status.success(),
-            "cargo --version should succeed via resolved_command"
+            "resolved_command should succeed for a known shell binary"
         );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("resolved-command-ok"));
     }
 
     // ===== tool_exists tests (issue #212) =====
