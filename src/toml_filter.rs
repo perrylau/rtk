@@ -425,6 +425,19 @@ pub fn find_filter_in<'a>(
 ///   7. max_lines            — absolute line cap
 ///   8. on_empty             — message if result is empty
 pub fn apply_filter(filter: &CompiledFilter, stdout: &str) -> String {
+    if !filter.strip_ansi && filter.replace.is_empty() && !filter.match_output.is_empty() {
+        for rule in &filter.match_output {
+            if rule.pattern.is_match(stdout) {
+                if let Some(ref unless_re) = rule.unless {
+                    if unless_re.is_match(stdout) {
+                        continue;
+                    }
+                }
+                return rule.message.clone();
+            }
+        }
+    }
+
     let mut lines: Vec<String> = stdout.lines().map(String::from).collect();
 
     // 1. strip_ansi
@@ -1177,6 +1190,22 @@ match_output = [
     }
 
     #[test]
+    fn test_match_output_fast_path_matches_raw_stdout() {
+        let f = first_filter(
+            r#"
+schema_version = 1
+[filters.f]
+match_command = "^cmd"
+match_output = [
+  { pattern = "Switched to branch", message = "ok" },
+]
+"#,
+        );
+        let out = apply_filter(&f, "Switched to branch 'feature/perf'\n");
+        assert_eq!(out, "ok");
+    }
+
+    #[test]
     fn test_match_output_second_rule_matches() {
         let f = first_filter(
             r#"
@@ -1288,6 +1317,23 @@ match_output = [
         );
         // The raw lines should pass through (no further strip rules in this filter)
         assert!(out.contains("error"));
+    }
+
+    #[test]
+    fn test_match_output_fast_path_unless_still_blocks() {
+        let f = first_filter(
+            r#"
+schema_version = 1
+[filters.f]
+match_command = "^rsync"
+match_output = [
+  { pattern = "total size is", message = "ok (synced)", unless = "error|failed" },
+]
+"#,
+        );
+        let input = "total size is 1000\nwarning: error still present\n";
+        let out = apply_filter(&f, input);
+        assert_eq!(out, input.trim_end_matches('\n'));
     }
 
     #[test]
