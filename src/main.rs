@@ -2089,6 +2089,13 @@ fn main() -> Result<()> {
                 eprintln!("Proxy mode: {} {}", cmd_name, cmd_args.join(" "));
             }
 
+            let proxied_command = if cmd_args.is_empty() {
+                cmd_name.clone()
+            } else {
+                format!("{} {}", cmd_name, cmd_args.join(" "))
+            };
+            let tracked_proxy_command = format!("rtk proxy {}", proxied_command);
+
             let mut child = utils::resolved_command(cmd_name.as_ref())
                 .args(&cmd_args)
                 .stdout(Stdio::piped())
@@ -2109,6 +2116,7 @@ fn main() -> Result<()> {
                 let mut reader = stdout_pipe;
                 let mut captured = Vec::new();
                 let mut buf = [0u8; 8192];
+                let mut out = std::io::stdout().lock();
 
                 loop {
                     let count = reader.read(&mut buf)?;
@@ -2116,7 +2124,6 @@ fn main() -> Result<()> {
                         break;
                     }
                     captured.extend_from_slice(&buf[..count]);
-                    let mut out = std::io::stdout().lock();
                     out.write_all(&buf[..count])?;
                     out.flush()?;
                 }
@@ -2128,6 +2135,7 @@ fn main() -> Result<()> {
                 let mut reader = stderr_pipe;
                 let mut captured = Vec::new();
                 let mut buf = [0u8; 8192];
+                let mut err = std::io::stderr().lock();
 
                 loop {
                     let count = reader.read(&mut buf)?;
@@ -2135,7 +2143,6 @@ fn main() -> Result<()> {
                         break;
                     }
                     captured.extend_from_slice(&buf[..count]);
-                    let mut err = std::io::stderr().lock();
                     err.write_all(&buf[..count])?;
                     err.flush()?;
                 }
@@ -2160,8 +2167,8 @@ fn main() -> Result<()> {
 
             // Track usage (input = output since no filtering)
             timer.track(
-                &format!("{} {}", cmd_name, cmd_args.join(" ")),
-                &format!("rtk proxy {} {}", cmd_name, cmd_args.join(" ")),
+                &proxied_command,
+                &tracked_proxy_command,
                 &full_output,
                 &full_output,
             );

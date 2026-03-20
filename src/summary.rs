@@ -1,8 +1,7 @@
 use crate::tracking;
-use crate::utils::truncate;
 use crate::utils;
+use crate::utils::truncate;
 use anyhow::{Context, Result};
-use regex::Regex;
 use std::process::Stdio;
 
 /// Run a command and provide a heuristic summary
@@ -30,7 +29,6 @@ pub fn run(command: &str, verbose: u8) -> Result<()> {
 }
 
 fn summarize_output(output: &str, command: &str, success: bool) -> String {
-    let lines: Vec<&str> = output.lines().collect();
     let mut result = Vec::new();
 
     // Status
@@ -40,7 +38,7 @@ fn summarize_output(output: &str, command: &str, success: bool) -> String {
         status_icon,
         truncate(command, 60)
     ));
-    result.push(format!("   {} lines of output", lines.len()));
+    result.push(format!("   {} lines of output", output.lines().count()));
     result.push(String::new());
 
     // Detect type of output and summarize accordingly
@@ -69,19 +67,18 @@ enum OutputType {
 }
 
 fn detect_output_type(output: &str, command: &str) -> OutputType {
-    let cmd_lower = command.to_lowercase();
-    let out_lower = output.to_lowercase();
-
-    if cmd_lower.contains("test") || out_lower.contains("passed") && out_lower.contains("failed") {
+    if contains_ascii_insensitive(command, "test")
+        || contains_ascii_insensitive(output, "passed") && contains_ascii_insensitive(output, "failed")
+    {
         OutputType::TestResults
-    } else if cmd_lower.contains("build")
-        || cmd_lower.contains("compile")
-        || out_lower.contains("compiling")
+    } else if contains_ascii_insensitive(command, "build")
+        || contains_ascii_insensitive(command, "compile")
+        || contains_ascii_insensitive(output, "compiling")
     {
         OutputType::BuildOutput
-    } else if out_lower.contains("error:")
-        || out_lower.contains("warn:")
-        || out_lower.contains("[info]")
+    } else if contains_ascii_insensitive(output, "error:")
+        || contains_ascii_insensitive(output, "warn:")
+        || contains_ascii_insensitive(output, "[info]")
     {
         OutputType::LogOutput
     } else if output.trim_start().starts_with('{') || output.trim_start().starts_with('[') {
@@ -109,26 +106,27 @@ fn summarize_tests(output: &str, result: &mut Vec<String>) {
     let mut failures = Vec::new();
 
     for line in output.lines() {
-        let lower = line.to_lowercase();
-        if lower.contains("passed") || lower.contains("✓") || lower.contains("ok") {
+        if contains_ascii_insensitive(line, "passed") || line.contains('✓') || contains_ascii_insensitive(line, "ok") {
             // Try to extract number
-            if let Some(n) = extract_number(&lower, "passed") {
+            if let Some(n) = extract_number(line, "passed") {
                 passed = n;
             } else {
                 passed += 1;
             }
         }
-        if lower.contains("failed") || lower.contains("[x]") || lower.contains("fail") {
-            if let Some(n) = extract_number(&lower, "failed") {
+        if contains_ascii_insensitive(line, "failed")
+            || contains_ascii_insensitive(line, "[x]")
+            || contains_ascii_insensitive(line, "fail")
+        {
+            if let Some(n) = extract_number(line, "failed") {
                 failed = n;
             }
-            if !line.contains("0 failed") {
+            if !contains_ascii_insensitive(line, "0 failed") {
                 failures.push(line.to_string());
             }
         }
-        if lower.contains("skipped") || lower.contains("ignored") {
-            if let Some(n) = extract_number(&lower, "skipped").or(extract_number(&lower, "ignored"))
-            {
+        if contains_ascii_insensitive(line, "skipped") || contains_ascii_insensitive(line, "ignored") {
+            if let Some(n) = extract_number(line, "skipped").or(extract_number(line, "ignored")) {
                 skipped = n;
             }
         }
@@ -160,17 +158,16 @@ fn summarize_build(output: &str, result: &mut Vec<String>) {
     let mut error_msgs = Vec::new();
 
     for line in output.lines() {
-        let lower = line.to_lowercase();
-        if lower.contains("error") && !lower.contains("0 error") {
+        if contains_ascii_insensitive(line, "error") && !contains_ascii_insensitive(line, "0 error") {
             errors += 1;
             if error_msgs.len() < 5 {
                 error_msgs.push(line.to_string());
             }
         }
-        if lower.contains("warning") && !lower.contains("0 warning") {
+        if contains_ascii_insensitive(line, "warning") && !contains_ascii_insensitive(line, "0 warning") {
             warnings += 1;
         }
-        if lower.contains("compiling") || lower.contains("compiled") {
+        if contains_ascii_insensitive(line, "compiling") || contains_ascii_insensitive(line, "compiled") {
             compiled += 1;
         }
     }
@@ -205,12 +202,11 @@ fn summarize_logs_quick(output: &str, result: &mut Vec<String>) {
     let mut info = 0;
 
     for line in output.lines() {
-        let lower = line.to_lowercase();
-        if lower.contains("error") || lower.contains("fatal") {
+        if contains_ascii_insensitive(line, "error") || contains_ascii_insensitive(line, "fatal") {
             errors += 1;
-        } else if lower.contains("warn") {
+        } else if contains_ascii_insensitive(line, "warn") {
             warnings += 1;
-        } else if lower.contains("info") {
+        } else if contains_ascii_insensitive(line, "info") {
             info += 1;
         }
     }
@@ -282,9 +278,83 @@ fn summarize_generic(output: &str, result: &mut Vec<String>) {
     }
 }
 
+fn contains_ascii_insensitive(text: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+
+    let haystack = text.as_bytes();
+    let needle = needle.as_bytes();
+
+    haystack
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
 fn extract_number(text: &str, after: &str) -> Option<usize> {
-    let re = Regex::new(&format!(r"(\d+)\s*{}", after)).ok()?;
-    re.captures(text)
-        .and_then(|c| c.get(1))
-        .and_then(|m| m.as_str().parse().ok())
+    let after = after.as_bytes();
+    let bytes = text.as_bytes();
+
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        if bytes[idx].is_ascii_digit() {
+            let start = idx;
+            while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+                idx += 1;
+            }
+
+            let digits = &text[start..idx];
+            let mut probe = idx;
+            while probe < bytes.len() && bytes[probe].is_ascii_whitespace() {
+                probe += 1;
+            }
+
+            if probe + after.len() <= bytes.len()
+                && bytes[probe..probe + after.len()].eq_ignore_ascii_case(after)
+            {
+                return digits.parse().ok();
+            }
+        } else {
+            idx += 1;
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_contains_ascii_insensitive() {
+        assert!(contains_ascii_insensitive("Build SUCCESS", "success"));
+        assert!(contains_ascii_insensitive("[INFO] started", "[info]"));
+        assert!(!contains_ascii_insensitive("warning", "fatal"));
+    }
+
+    #[test]
+    fn test_extract_number_matches_keyword_case_insensitive() {
+        assert_eq!(extract_number("15 passed", "passed"), Some(15));
+        assert_eq!(extract_number("2 FAILED", "failed"), Some(2));
+        assert_eq!(extract_number("7 ignored", "ignored"), Some(7));
+    }
+
+    #[test]
+    fn test_extract_number_ignores_non_matching_sequences() {
+        assert_eq!(extract_number("abc123 xyz", "passed"), None);
+        assert_eq!(extract_number("0 warnings", "failed"), None);
+    }
+
+    #[test]
+    fn test_detect_output_type_without_lowercasing() {
+        assert!(matches!(
+            detect_output_type("PASSED 10 tests, FAILED 1", "runner"),
+            OutputType::TestResults
+        ));
+        assert!(matches!(
+            detect_output_type("[INFO] startup complete", "server"),
+            OutputType::LogOutput
+        ));
+    }
 }

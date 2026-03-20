@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 /// Truncates a string to `max_len` characters, appending `...` if needed.
 ///
@@ -85,6 +86,12 @@ pub fn execute_command(cmd: &str, args: &[&str]) -> Result<(String, String, i32)
 struct ShellInvocation {
     program: String,
     command_flag: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AutoShellAvailability {
+    has_pwsh: bool,
+    has_powershell: bool,
 }
 
 fn shell_program_name(program: &str) -> String {
@@ -169,13 +176,19 @@ fn shell_invocation(
 /// - on Windows, falls back to `pwsh`, then `powershell`, then `COMSPEC`, then `cmd`
 /// - on Unix, falls back to `sh`
 pub fn shell_command(command: &str) -> Command {
+    static AUTO_SHELL_AVAILABILITY: OnceLock<AutoShellAvailability> = OnceLock::new();
+    let availability = AUTO_SHELL_AVAILABILITY.get_or_init(|| AutoShellAvailability {
+        has_pwsh: tool_exists("pwsh"),
+        has_powershell: tool_exists("powershell"),
+    });
+
     let invocation = shell_invocation(
         cfg!(target_os = "windows"),
         std::env::var("RTK_SHELL").ok().as_deref(),
         std::env::var("SHELL").ok().as_deref(),
         std::env::var("COMSPEC").ok().as_deref(),
-        tool_exists("pwsh"),
-        tool_exists("powershell"),
+        availability.has_pwsh,
+        availability.has_powershell,
     );
 
     let mut cmd = Command::new(&invocation.program);

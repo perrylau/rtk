@@ -205,6 +205,28 @@ Known bad combinations observed during verification:
 - `rustup` shim cargo/rustc without a configured default toolchain
   - `rustup could not choose a version of rustc to run`
 
+### Windows Packaging
+
+If you need a redistributable Windows build from the validated gnullvm environment, use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\package-windows-gnullvm.ps1
+```
+
+The script:
+
+- builds `target\x86_64-pc-windows-gnullvm\release\rtk.exe`
+- copies the executable into `dist\windows-gnullvm`
+- inspects imported DLLs via `llvm-readobj.exe`
+- copies any runtime DLLs found in the configured `llvm-mingw` bin directory
+
+To replace the globally used binary directly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\package-windows-gnullvm.ps1 `
+  -DeployTo E:\ai\rtk_for_copilot
+```
+
 ### PR Testing Checklist
 
 - [ ] Unit tests added/updated for changed code
