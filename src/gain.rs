@@ -106,14 +106,7 @@ pub fn run(
 
         // Warn about hook issues that silently kill savings (stderr, not stdout)
         match hook_check::status() {
-            hook_check::HookStatus::Missing => {
-                eprintln!(
-                    "{}",
-                    "[warn] No hook installed — run `rtk init -g` for automatic token savings"
-                        .yellow()
-                );
-                eprintln!();
-            }
+            hook_check::HookStatus::Missing => {}
             hook_check::HookStatus::Outdated => {
                 eprintln!(
                     "{}",
